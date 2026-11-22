@@ -4,7 +4,7 @@ demo provider, so they are labelled simulated end to end."""
 import sys
 from datetime import date, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from adapters.payments import DemoPaymentProvider
@@ -13,8 +13,8 @@ from domain import ledger, reconciliation
 from . import clock
 from .config import Settings, get_settings
 from .db import Base
-from .models import (Consent, ContactEvent, Customer, Invoice, InvoiceLine, Merchant, MerchantProviderAccount, Message,
-                     Payment, PaymentRequest, Promise, User)
+from .models import (AuthSession, Consent, ContactEvent, Customer, Invoice, InvoiceLine, Merchant, MerchantProviderAccount, Message,
+                     Payment, PaymentAllocation, PaymentRequest, Promise, User)
 
 DEMO_USERS = [
     ("usr_owner_a", "mer_demo_a", "Lakshmi (owner)", "owner@srilakshmi.example", "owner"),
@@ -56,6 +56,10 @@ def _verified_payment(db: Session, settings: Settings, req_id: str, inv: Invoice
                                         created_at=int(when.replace(tzinfo=clock.timezone.utc).timestamp()))
     res = reconciliation.ingest_webhook(db, settings, "demo", body, sig, f"evt_seed_{pay_id}")
     assert res.status == "processed", res
+    # Seed-only backdating so history reads as if it was posted when the payment arrived. Done with a
+    # table-level statement because ledger rows are immutable through the application.
+    paid = db.scalar(select(Payment.id).where(Payment.provider_payment_id == pay_id))
+    db.execute(update(PaymentAllocation.__table__).where(PaymentAllocation.payment_id == paid).values(created_at=when))
 
 
 def seed(db: Session, settings: Settings, today: date | None = None) -> None:
@@ -133,9 +137,16 @@ def seed(db: Session, settings: Settings, today: date | None = None) -> None:
 
 
 def reset(db: Session, settings: Settings, today: date | None = None) -> None:
+    """Restore the seeded data. Sign-in sessions of the seeded users survive, so whoever pressed
+    reset (and anyone else in the demo) stays signed in and no request is left holding a dead token."""
+    sessions = [dict(r._mapping) for r in db.execute(select(AuthSession.__table__))]
     for table in reversed(Base.metadata.sorted_tables):
         db.execute(table.delete())
     seed(db, settings, today)
+    seeded = {u[0] for u in DEMO_USERS}
+    keep = [s for s in sessions if s["user_id"] in seeded]
+    if keep:
+        db.execute(AuthSession.__table__.insert(), keep)
 
 
 def main() -> None:

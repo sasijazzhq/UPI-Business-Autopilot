@@ -36,31 +36,59 @@ Optional: `cp .env.example .env` and fill in keys; `pip install -r requirements-
 for the Gemini / Razorpay / ElevenLabs SDKs. For PostgreSQL, start `infra/docker-compose.yml` and
 set `DATABASE_URL`.
 
+## One mobile app, everywhere
+
+There is a single mobile layout. On a phone it runs full screen. On a laptop the same running app
+sits in a centred, phone-sized viewport on a chat-wallpaper stage, so a projected demo still looks
+like a phone app. No desktop layout, sidebar or data tables exist. Tabs: Home, Bills, Promises,
+Payments, More (Customers, Invoices, Assistant, Settings).
+
 ## Tests
 
 ```bash
 cd services/api && pytest
 ```
 
-26 tests cover: the ₹20,000 → ₹5,000 → ₹10,000 → ₹5,000-remaining → closed scenario, duplicate and
+30 tests cover: the ₹20,000 → ₹5,000 → ₹10,000 → ₹5,000-remaining → closed scenario, duplicate and
 out-of-order webhooks, forged/tampered signatures, overpayment, over-allocation, unverified
 receipts, disputes and refunds, multi-tenant isolation, role checks, upload → review → approve,
-promise parsing ("₹3,000 on Friday, ₹2,000 on Monday" → two promises, zero receipts), the daily
+the day-movement breakdown, reset access and session survival, the demo access code, promise parsing ("₹3,000 on Friday, ₹2,000 on Monday" → two promises, zero receipts), the daily
 report, the assistant, outbound gating, the WhatsApp webhook and migration/model parity.
 To run them on PostgreSQL: `TEST_DATABASE_URL=postgresql+psycopg://... pytest` (after
 `alembic upgrade head` against that database).
 
-## Five-minute demo
+## Guided demo for judges
 
-1. **Today** – pending, confirmed received, promised today, unverified claims, collection visits.
-   Ask "Who agreed to pay today?", "How much did Murugan Stores pay?", "What is my confirmed cash in?"
-2. **Bills → Try a sample WhatsApp bill photo** – the draft flags a wrong line total, a smudged
-   quantity and missing tax. Fix, tick the acknowledgement, approve → invoice.
-3. **Invoices → INV-0001** – ₹20,000, two receipts, ₹5,000 due. Prepare a ₹5,000 UPI request,
-   approve it (owner), "Simulate customer paying" → paid, with the full allocation trail.
-4. **Promises** – receive "₹3,000 on Friday, ₹2,000 on Monday", confirm → two promises, balance unchanged.
-5. **Payments** – send a duplicate webhook, a forged signature, an unmatched payment, a refund or a
-   dispute; confirm or dispute the seeded screenshot claim.
+On the sign-in screen tap **Try the guided demo** (or Home → **Try the demo**, or More → Guided demo).
+A compact bar shows the current step and one action; "Why" opens a short explanation. Eight steps,
+all in the real app:
+
+Home → sample handwritten bill → draft review → approved invoice → part payments → a customer promise →
+verified payment → updated Home.
+
+- The guide only points and waits. Every step is completed by the real action and all the usual
+  checks apply (a bill cannot be approved until its numbers add up and warnings are ticked; only
+  an owner can approve a UPI request; only a signed provider message changes a balance).
+- Without a Gemini key the bill draft is a fixed sample, **not read from the photo**. The app says
+  so on the Bills screen, on the draft and in the guide.
+- Hide, Skip or End at any time; the tabs keep working while it is open.
+- Starting or restarting restores the seeded sample data and keeps you signed in. More →
+  **Reset sample data only** does the same without the guide. Owner role and `DEMO_MODE=true` required.
+
+### Why "owed" goes up during the demo
+
+Home shows how the number moved, so the rise is expected, not a bug:
+
+| | Start of guide | End of guide |
+|---|---|---|
+| Owed this morning | ₹35,900 | ₹35,900 |
+| + New bills today | ₹0 | ₹5,300 (the sample bill you approved) |
+| − Verified payments | ₹10,000 | ₹15,000 (adds the ₹5,000 UPI payment) |
+| = Still owed now | **₹25,900** | **₹26,200** |
+
+The ₹2,500 promise recorded in step 6 changes none of these.
+
+Sharing a demo link: see [`docs/PREVIEW.md`](docs/PREVIEW.md). Screenshots: `docs/screenshots/`.
 
 ## What is live, test mode or simulated
 

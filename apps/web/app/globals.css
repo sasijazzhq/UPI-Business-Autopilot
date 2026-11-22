@@ -2,27 +2,163 @@
 
 @theme inline {
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Noto Sans Tamil", sans-serif;
-  --color-ink: #14212b;
-  --color-muted: #5b6b78;
-  --color-line: #dfe5ea;
-  --color-canvas: #f4f6f8;
-  --color-brand: #0f5c5c;
-  --color-brand-soft: #e3f1f0;
+  --color-ink: #1b2420;
+  --color-muted: #5d6a62;
+  --color-line: #e7e0d2;
+  --color-canvas: #f7f3ea;
+  --color-brand: #0a6b4d;
+  --color-brand-dark: #07513a;
+  --color-brand-soft: #e1f2e8;
+  --color-bubble: #dcf5d3;
 }
 
 :root {
   color-scheme: light;
+  /* Original doodle tile (rupee, receipt, tick, speech bubble, leaf) used as the chat wallpaper. */
+  --wallpaper: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180' viewBox='0 0 180 180' fill='none' stroke='%230a6b4d' stroke-opacity='0.11' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M18 22h16M18 29h16M22 22c9 0 9 12 0 12h-4l12 13'/%3E%3Cpath d='M78 14h22v30l-4-3-4 3-3-3-4 3-3-3-4 3V14zm5 8h12m-12 6h12m-12 6h7'/%3E%3Cpath d='M138 28l7 7 13-15'/%3E%3Cpath d='M20 84h30v20H34l-8 7v-7h-6V84zm7 7h16m-16 6h10'/%3E%3Cpath d='M96 78c14 2 20 12 16 26-14-2-20-12-16-26zm4 6l9 15'/%3E%3Ccircle cx='150' cy='94' r='11'/%3E%3Cpath d='M146 90h8m-8 4h8m-6-4c5 0 5 6 0 6h-2l6 6'/%3E%3Cpath d='M22 146h26v16H22v-16zm0 5h26m-20 6h6'/%3E%3Cpath d='M84 150l6 6 12-13M112 150l6 6 12-13' /%3E%3Cpath d='M150 142v22m-7-15c0-9 14-9 14 0s-14 6-14 12 14 8 14 0'/%3E%3C/svg%3E");
+}
+
+html,
+body {
+  height: 100%;
 }
 
 body {
-  background: var(--color-canvas);
+  background-color: #e9e1d2;
+  background-image: var(--wallpaper);
   color: var(--color-ink);
+  overscroll-behavior: none;
 }
 
-input, select, textarea {
+/* Desktop is only a stage: the same mobile app runs inside a centred, phone-sized viewport. */
+.stage {
+  display: flex;
+  min-height: 100dvh;
+  /* Phones: pin to the top so the app sits in the visible area above an open keyboard. */
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.phone {
+  position: relative;
+  display: flex;
+  width: 100%;
+  /* --app-h tracks the visual viewport (set in the shell) so the composer and sheets stay above
+     the on-screen keyboard on iOS, where dvh does not shrink. */
+  height: var(--app-h, 100dvh);
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--color-canvas);
+  transform: translateZ(0); /* sheets and overlays position against the phone, not the window */
+}
+
+@media (min-width: 520px) {
+  .stage {
+    align-items: center;
+    padding: 20px;
+  }
+  .phone {
+    width: 412px;
+    height: min(880px, calc(100dvh - 40px));
+    border-radius: 38px;
+    border: 9px solid #14201b;
+    box-shadow: 0 30px 70px -20px rgb(20 32 27 / 0.55), 0 0 0 1px rgb(255 255 255 / 0.25);
+  }
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+
+button,
+a,
+summary,
+label {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+.wallpaper {
+  background-color: #efe8da;
+  background-image: var(--wallpaper);
+}
+
+.scroll-area {
+  scrollbar-width: none;
+}
+.scroll-area::-webkit-scrollbar {
+  display: none;
+}
+
+input,
+select,
+textarea {
   background: #fff;
 }
 
 .tabular {
   font-variant-numeric: tabular-nums;
+}
+
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes sheet-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: none;
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.page-in {
+  animation: page-in 0.22s ease-out;
+}
+.sheet-up {
+  animation: sheet-up 0.24s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.fade-in {
+  animation: fade-in 0.2s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .page-in,
+  .sheet-up,
+  .fade-in {
+    animation: none;
+  }
+}
+
+@keyframes guide-in {
+  from {
+    transform: translateY(12px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+.guide-in {
+  animation: guide-in 0.25s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .guide-in {
+    animation: none;
+  }
 }

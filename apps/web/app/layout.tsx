@@ -7,12 +7,12 @@ export const metadata: Metadata = {
   description: "Bills, partial payments, promises and verified cash-in for Indian merchants.",
 };
 
-export const viewport: Viewport = { width: "device-width", initialScale: 1 };
+export const viewport: Viewport = { width: "device-width", initialScale: 1, viewportFit: "cover", themeColor: "#0a6b4d", interactiveWidget: "resizes-content" };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en-IN" className="h-full antialiased">
-      <body className="min-h-full font-sans">
+    <html lang="en-IN" className="antialiased">
+      <body className="font-sans">
         <Shell>{children}</Shell>
       </body>
     </html>

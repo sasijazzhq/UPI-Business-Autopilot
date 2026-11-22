@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     max_upload_bytes: int = 10 * 1024 * 1024
     web_base_url: str = "http://localhost:3000"
     session_hours: int = 12
+    # Optional shared code for the passwordless demo sign-in. Set it before sharing a demo link.
+    demo_access_code: str | None = None
 
     # Demo payment provider (always simulated money).
     demo_webhook_secret: str = "demo-webhook-secret-change-me"

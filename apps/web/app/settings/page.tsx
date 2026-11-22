@@ -1,7 +1,8 @@
 "use client";
 import { useMe } from "@/components/shell";
 import { Badge, Button, Card, ErrorBox, Loading, PageHeader, useAction } from "@/components/ui";
-import { post, setToken, useApi } from "@/lib/api";
+import { setToken, useApi } from "@/lib/api";
+import { resetDemo } from "@/lib/demo";
 
 interface Integration {
   key: string;
@@ -17,7 +18,7 @@ export default function SettingsPage() {
   const act = useAction();
   return (
     <>
-      <PageHeader title="Settings and integrations" subtitle="Every connection is labelled live, test mode or simulated." />
+      <PageHeader back={{ href: "/more", label: "More" }} title="Settings" subtitle="Every connection is labelled live, test mode or simulated." />
       <div className="space-y-4">
         <Card title="Integrations">
           {error && <ErrorBox message={error} onRetry={reload} />}
@@ -55,9 +56,9 @@ export default function SettingsPage() {
               <Button
                 variant="danger"
                 busy={act.busy === "reset"}
-                onClick={() => window.confirm("Erase everything and restore the sample data for all demo merchants?") && act.run("reset", async () => (await post("/v1/demo/reset"), setToken(null)))}
+                onClick={() => window.confirm("Erase everything and restore the sample data for all demo merchants?") && act.run("reset", () => resetDemo(false))}
               >
-                Reset demo data
+                Reset sample data
               </Button>
             )}
           </div>

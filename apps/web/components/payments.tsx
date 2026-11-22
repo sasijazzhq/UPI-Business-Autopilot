@@ -1,9 +1,10 @@
 "use client";
 import { useState } from "react";
-import { fmtDateTime, inr, parseRupees, post } from "@/lib/api";
+import { fmtDateTime, inr, methodLabel, parseRupees, post } from "@/lib/api";
+import { emitDemo } from "@/lib/demo";
 import type { Payment, PaymentRequest } from "@/lib/types";
 import { useMe } from "./shell";
-import { Badge, Button, ErrorBox, Field, SimTag, inputCls, useAction } from "./ui";
+import { Badge, Button, ErrorBox, Field, SimTag, TextAction, inputCls, useAction } from "./ui";
 
 const EVIDENCE: Record<string, string> = { cash_in_hand: "Cash in hand", screenshot: "Screenshot", bank_sms: "Bank SMS", verbal: "Verbal claim" };
 
@@ -37,7 +38,7 @@ export function PaymentRow({ p, onChange, showCustomer = false }: { p: Payment; 
             {showCustomer && <span className="font-medium">{p.customer_name ?? "Unmatched payer"}</span>}
           </p>
           <p className="mt-0.5 text-xs text-muted">
-            {fmtDateTime(p.received_at)} · {p.provider === "manual" ? `Entered by hand · ${EVIDENCE[p.evidence_type ?? ""] ?? p.method}` : `${p.provider} · ${p.method ?? "upi"}`}
+            {fmtDateTime(p.received_at)} · {p.provider === "manual" ? `Entered by hand · ${EVIDENCE[p.evidence_type ?? ""] ?? methodLabel(p.method)}` : `${methodLabel(p.method)} · signed by ${p.provider === "demo" ? "payment provider" : "Razorpay"}`}
           </p>
           {p.note && <p className="mt-0.5 text-xs text-muted">“{p.note}”</p>}
           {p.unallocated_paise > 0 && <p className="mt-0.5 text-xs font-medium text-amber-800">{inr(p.unallocated_paise)} not applied to any invoice</p>}
@@ -45,9 +46,9 @@ export function PaymentRow({ p, onChange, showCustomer = false }: { p: Payment; 
         <span className={`tabular shrink-0 font-semibold ${["disputed", "reversed", "failed"].includes(p.state) ? "text-muted line-through" : ""}`}>{inr(p.amount_paise)}</span>
       </div>
       {canWrite && !mode && (
-        <div className="mt-1.5 flex flex-wrap gap-2">
+        <div className="mt-1 flex flex-wrap items-center gap-x-2">
           {p.state === "manual_unverified" && owner && <Button variant="secondary" onClick={() => setMode("confirm")}>Confirm after checking</Button>}
-          {["manual_unverified", "provider_verified", "merchant_confirmed"].includes(p.state) && <Button variant="ghost" onClick={() => setMode("dispute")}>Dispute</Button>}
+          {["manual_unverified", "provider_verified", "merchant_confirmed"].includes(p.state) && <TextAction tone="muted" onClick={() => setMode("dispute")}>Something wrong? Dispute</TextAction>}
           {p.state === "disputed" && owner && (
             <>
               <Button variant="secondary" onClick={() => setMode("uphold")}>Receipt is valid</Button>
@@ -58,7 +59,7 @@ export function PaymentRow({ p, onChange, showCustomer = false }: { p: Payment; 
         </div>
       )}
       {mode && (
-        <div className="mt-2 space-y-2 rounded-lg bg-slate-50 p-2">
+        <div className="mt-2 space-y-2 rounded-lg bg-stone-50 p-2">
           <Field label={mode === "confirm" ? "How did you verify this money? (kept in the audit log)" : "Reason (kept in the audit log)"}>
             <input className={inputCls} value={note} onChange={(e) => setNote(e.target.value)} placeholder={mode === "confirm" ? "e.g. Counted cash and deposited; seen in bank statement" : "e.g. No credit in bank statement"} />
           </Field>
@@ -90,26 +91,30 @@ export function RequestRow({ r, onChange, showInvoice = false }: { r: PaymentReq
         <span className="tabular font-semibold">{inr(r.amount_paise)}</span>
       </div>
       {r.status === "proposed" && <p className="mt-0.5 text-xs text-muted">Nothing has been created or sent. An owner must approve first.</p>}
-      {r.status === "approved" && <p className="mt-0.5 text-xs text-muted">Not sent to the customer by this app. Share the link yourself if you choose to.</p>}
+      {r.status === "approved" && <p className="mt-0.5 text-xs text-muted">Ready. This app has not sent it to the customer; share the link yourself.</p>}
       {act.error && <div className="mt-2"><ErrorBox message={act.error} /></div>}
       {me.role !== "viewer" && (
         <div className="mt-1.5 flex flex-wrap gap-2">
           {r.status === "proposed" && me.role === "owner" && (
             <Button busy={act.busy === "approve"} onClick={() => act.run("approve", async () => (await post(`/v1/payment-intents/${r.id}/approve`, { provider: "demo" }), onChange()))}>
-              Approve (demo provider)
+              Approve request
             </Button>
           )}
           {r.status === "proposed" && me.role !== "owner" && <span className="text-xs text-muted">Waiting for an owner to approve.</span>}
           {r.status === "approved" && r.mode === "simulated" && (
-            <Button busy={act.busy === "pay"} onClick={() => act.run("pay", async () => (await post("/v1/demo/simulate-payment-event", { payment_request_id: r.id }), onChange()))}>
-              Simulate customer paying
+            <Button busy={act.busy === "pay"} onClick={() => act.run("pay", async () => {
+              const res = await post("/v1/demo/simulate-payment-event", { payment_request_id: r.id });
+              if (res.payment?.state === "provider_verified") emitDemo("payment-verified");
+              onChange();
+            })}>
+              Customer pays (demo)
             </Button>
           )}
           {r.status === "approved" && r.link_url && (
             <Button variant="secondary" onClick={() => navigator.clipboard?.writeText(r.link_url!).then(() => setCopied(true))}>{copied ? "Link copied" : "Copy link"}</Button>
           )}
           {["proposed", "approved"].includes(r.status) && (
-            <Button variant="ghost" busy={act.busy === "cancel"} onClick={() => act.run("cancel", async () => (await post(`/v1/payment-intents/${r.id}/cancel`), onChange()))}>Cancel</Button>
+            <TextAction tone="muted" disabled={act.busy === "cancel"} onClick={() => act.run("cancel", async () => (await post(`/v1/payment-intents/${r.id}/cancel`), onChange()))}>Cancel request</TextAction>
           )}
         </div>
       )}
@@ -130,12 +135,12 @@ export function ProposeRequest({ invoiceId, duePaise, onChange }: { invoiceId: s
         act.run("propose", async () => (await post("/v1/payment-intents", { invoice_id: invoiceId, amount_paise: amount }), setText(""), onChange()));
       }}
     >
-      <div className="w-40">
+      <div className="min-w-0 flex-1">
         <Field label="Amount to request (₹)" error={invalid ? `Enter up to ${inr(duePaise)}` : undefined}>
           <input className={`${inputCls} tabular`} inputMode="decimal" value={text} onChange={(e) => setText(e.target.value)} placeholder={String(Math.floor(duePaise / 100))} />
         </Field>
       </div>
-      <Button type="submit" variant="secondary" busy={!!act.busy} disabled={amount === null || invalid}>Prepare UPI request</Button>
+      <Button type="submit" variant="secondary" busy={!!act.busy} disabled={amount === null || invalid}>Prepare request</Button>
       {act.error && <div className="w-full"><ErrorBox message={act.error} /></div>}
     </form>
   );
@@ -148,10 +153,10 @@ export function ManualReceipt({ invoiceId, customerId, onChange }: { invoiceId: 
   const [note, setNote] = useState("");
   const act = useAction();
   const amount = parseRupees(text);
-  if (!open) return <Button variant="ghost" onClick={() => setOpen(true)}>Record a cash or claimed receipt</Button>;
+  if (!open) return <Button variant="secondary" className="w-full" onClick={() => setOpen(true)}>Customer says they paid? Note it</Button>;
   return (
     <form
-      className="space-y-2 rounded-lg bg-slate-50 p-3"
+      className="space-y-2 rounded-lg bg-stone-50 p-3"
       onSubmit={(e) => {
         e.preventDefault();
         act.run("manual", async () => {
@@ -163,7 +168,7 @@ export function ManualReceipt({ invoiceId, customerId, onChange }: { invoiceId: 
         });
       }}
     >
-      <div className="grid gap-2 sm:grid-cols-2">
+      <div className="grid gap-2">
         <Field label="Amount (₹)">
           <input className={`${inputCls} tabular`} inputMode="decimal" value={text} onChange={(e) => setText(e.target.value)} />
         </Field>

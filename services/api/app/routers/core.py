@@ -1,5 +1,6 @@
 """Auth, customers, invoices, uploads and invoice drafts."""
 import hashlib
+import hmac
 import os
 from datetime import date
 
@@ -31,6 +32,13 @@ ALLOWED_TYPES = {"image/jpeg": (b"\xff\xd8\xff", ".jpg"), "image/png": (b"\x89PN
 # ---- auth ---------------------------------------------------------------------------------------
 class DemoLogin(BaseModel):
     user_id: str
+    access_code: str | None = Field(default=None, max_length=200)
+
+
+@router.get("/auth/demo-config")
+def demo_config():
+    s = get_settings()
+    return {"demo_mode": s.demo_mode, "access_code_required": bool(s.demo_mode and s.demo_access_code)}
 
 
 @router.get("/auth/demo-users")
@@ -45,8 +53,11 @@ def demo_users(db: Session = Depends(get_db)):
 @router.post("/auth/demo-login")
 def demo_login(body: DemoLogin, db: Session = Depends(get_db)):
     """Demo-only passwordless login for the seeded users. Disabled when DEMO_MODE=false."""
-    if not get_settings().demo_mode:
+    settings = get_settings()
+    if not settings.demo_mode:
         raise HTTPException(404, "Demo login is disabled")
+    if settings.demo_access_code and not hmac.compare_digest(settings.demo_access_code.encode(), (body.access_code or "").encode()):
+        raise HTTPException(403, "Enter the demo access code to continue")
     user = db.get(User, body.user_id)
     if user is None or user.id not in {u[0] for u in DEMO_USERS}:
         raise HTTPException(404, "Unknown demo user")

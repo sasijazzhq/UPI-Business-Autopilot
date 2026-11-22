@@ -1,8 +1,9 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useMe } from "@/components/shell";
-import { Badge, Button, Card, Empty, ErrorBox, Field, Loading, Notice, PageHeader, SimTag, inputCls, useAction } from "@/components/ui";
-import { api, fmtDate, fmtDateTime, inr, parseRupees, post, rupeesText, useApi } from "@/lib/api";
+import { Avatar, Badge, Button, Card, DateField, Empty, ErrorBox, Field, Loading, Notice, Sheet, SimTag, TextAction, inputCls, useAction } from "@/components/ui";
+import { api, fmtDateTime, fmtDay, inr, methodLabel, parseRupees, post, rupeesText, useApi } from "@/lib/api";
+import { emitDemo } from "@/lib/demo";
 import type { Customer, Invoice, PromiseRow } from "@/lib/types";
 
 interface Message {
@@ -51,7 +52,9 @@ export default function ConversationsPage() {
 
   useEffect(() => {
     if (customerId || !customers.data?.length) return;
-    const wanted = new URLSearchParams(window.location.search).get("customer");
+    const params = new URLSearchParams(window.location.search);
+    const wanted = params.get("customer");
+    if (params.get("say")) setReply(params.get("say") as string);
     setCustomerId(customers.data.find((c) => c.id === wanted)?.id ?? customers.data[0].id);
   }, [customers.data, customerId]);
   useEffect(() => {
@@ -95,6 +98,7 @@ export default function ConversationsPage() {
       });
       setEvidence(null);
       setProposals([]);
+      emitDemo("promise-saved");
       promises.reload();
       customers.reload();
     });
@@ -115,40 +119,48 @@ export default function ConversationsPage() {
 
   return (
     <>
-      <PageHeader title="Conversations and promises" subtitle="Record what customers say they will pay. A promise never changes a balance." />
-      <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
+      <div className="scroll-area -mx-4 mb-3 flex gap-2 overflow-x-auto px-4 pb-1">
         {customers.data.map((c) => (
-          <button key={c.id} onClick={() => setCustomerId(c.id)} aria-pressed={c.id === customerId} className={`shrink-0 rounded-full border px-3 py-1.5 text-sm ${c.id === customerId ? "border-brand bg-brand text-white" : "border-line bg-white"}`}>
-            {c.name}
+          <button key={c.id} onClick={() => setCustomerId(c.id)} aria-pressed={c.id === customerId} className={`flex min-h-11 shrink-0 items-center gap-2 rounded-full border py-1 pl-1.5 pr-3.5 text-sm font-semibold shadow-sm ${c.id === customerId ? "border-brand bg-brand text-white" : "border-line bg-white"}`}>
+            <Avatar name={c.name} size="h-8 w-8 text-xs" />
+            {c.name.split(" ")[0]}
           </button>
         ))}
       </div>
+      {customer && (
+        <div className="mb-3 flex items-center justify-between rounded-2xl bg-white/90 px-3 py-2 text-sm shadow-sm">
+          <span className="min-w-0"><span className="block truncate font-bold">{customer.name}</span><span className="text-xs text-muted">Promised {inr(customer.promised_open_paise)}</span></span>
+          <span className="text-right"><span className="tabular block text-base font-bold">{inr(customer.outstanding_paise)}</span><span className="text-xs text-muted">to collect</span></span>
+        </div>
+      )}
       {act.error && <div className="mb-3"><ErrorBox message={act.error} /></div>}
       {note && <div className="mb-3"><Notice tone="amber">{note}</Notice></div>}
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <div className="space-y-4">
-          <Card title="Inbox" action={<Badge label="Simulator" tone="violet" />}>
+      <div className="grid gap-3">
+        <div className="contents">
+          <div>
+            <p className="mx-auto mb-2 w-fit rounded-lg bg-amber-100/90 px-3 py-1 text-center text-xs text-amber-950 shadow-sm">Sample inbox. Messages stay inside this app.</p>
             {messages.loading && !messages.data && <Loading />}
-            {messages.data?.length === 0 && <Empty>No messages with this customer.</Empty>}
+            {messages.data?.length === 0 && <p className="py-3 text-center text-xs text-muted">No messages with this customer yet.</p>}
             <ul className="space-y-2">
               {messages.data?.map((m) => (
                 <li key={m.id} className={`flex ${m.direction === "outbound" ? "justify-end" : "justify-start"}`}>
-                  <div className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm ${m.direction === "outbound" ? "bg-brand-soft" : "bg-slate-100"}`}>
+                  <div className={`max-w-[85%] px-3 py-2 text-[14px] leading-snug shadow-sm ${m.direction === "outbound" ? "rounded-2xl rounded-tr-md bg-bubble" : "rounded-2xl rounded-tl-md bg-white"}`}>
                     <p className="whitespace-pre-wrap break-words">{m.body}</p>
-                    <p className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted">
+                    <p className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted">
                       {fmtDateTime(m.created_at)} <SimTag show={m.simulated} />
                       {m.direction === "outbound" && <Badge status={m.status} />}
-                      {m.direction === "inbound" && canWrite && <button className="font-medium text-brand underline" onClick={() => readMessage(m)}>Record promise from this</button>}
+                      
                     </p>
-                    {m.block_reason && <p className="mt-1 text-[11px] text-rose-700">{m.block_reason}</p>}
+                    {m.block_reason && <p className="mt-1 text-xs text-rose-700">{m.block_reason}</p>}
+                    {m.direction === "inbound" && canWrite && <TextAction className="-mb-1.5 -ml-2 !min-h-9" onClick={() => readMessage(m)}>Note a promise from this</TextAction>}
                   </div>
                 </li>
               ))}
             </ul>
             {canWrite && me.demo_mode && (
-              <form className="mt-3 border-t border-line pt-3" onSubmit={(e) => (e.preventDefault(), simulateReply())}>
-                <Field label="Simulate a reply from the customer" hint="Stored as a simulated message. Try Tamil-English too: “naalaiku 1500 cash”.">
+              <form className="mt-3 rounded-2xl bg-white p-3 shadow-sm" onSubmit={(e) => (e.preventDefault(), simulateReply())}>
+                <Field label="Type what the customer replies (sample)" hint="Tamil-English works too: “naalaiku 1500 cash”.">
                   <div className="flex gap-2">
                     <input className={inputCls} value={reply} onChange={(e) => setReply(e.target.value)} maxLength={2000} />
                     <Button type="submit" variant="secondary" busy={act.busy === "reply"} disabled={!reply.trim()}>Receive</Button>
@@ -156,16 +168,16 @@ export default function ConversationsPage() {
                 </Field>
               </form>
             )}
-          </Card>
+          </div>
 
           {canWrite && (
-            <Card title="Send to this customer" action={<Badge label="Approval + opt-in required" tone="gray" />}>
+            <Card className="order-3" title="Send a message" action={<Badge label="Needs opt-in" tone="gray" />}>
               <div className="space-y-2">
                 <select aria-label="Message type" className={inputCls} value={outType} onChange={(e) => setOutType(e.target.value)}>
                   {Object.entries(TYPES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                 </select>
                 <textarea aria-label="Message" className={inputCls} rows={2} value={outBody} onChange={(e) => setOutBody(e.target.value)} placeholder="Message text" maxLength={2000} />
-                <Button variant="secondary" busy={act.busy === "out"} disabled={!outBody.trim()} onClick={sendOutbound}>Approve and deliver to demo inbox</Button>
+                <Button variant="secondary" busy={act.busy === "out"} disabled={!outBody.trim()} onClick={sendOutbound}>Approve and send to demo inbox</Button>
                 <p className="text-xs text-muted">
                   Demo inbox consent: {customer?.consents.demo_inbox === "opt_in" ? "opted in" : customer?.consents.demo_inbox === "opt_out" ? "opted out" : "none recorded"}. Real WhatsApp sending is not built; overdue or collection reminders are always refused.
                 </p>
@@ -174,23 +186,23 @@ export default function ConversationsPage() {
           )}
         </div>
 
-        <div className="space-y-4">
-          {evidence && (
-            <Card title="Confirm the commitment" action={<Badge label="Not saved yet" tone="amber" />}>
-              <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm">“{evidence.text}”</p>
+        <div className="contents">
+          <Sheet open={!!evidence} title="Confirm the promise" onClose={() => (setEvidence(null), setProposals([]))}>
+            {evidence && (<>
+              <p className="rounded-2xl rounded-tl-md bg-stone-100 px-3 py-2 text-sm">“{evidence.text}”</p>
               <div className="mt-3 space-y-2">
                 {proposals.map((p, i) => {
                   const set = (patch: Partial<Proposal>) => setProposals((all) => all.map((x, j) => (j === i ? { ...x, ...patch } : x)));
                   return (
-                    <div key={i} className="grid grid-cols-2 gap-2 rounded-lg border border-line p-2 sm:grid-cols-4">
+                    <div key={i} className="grid grid-cols-2 gap-2 rounded-lg border border-line p-2">
                       <input aria-label="Amount in rupees" className={`${inputCls} tabular`} inputMode="decimal" placeholder="₹ amount" value={p.amount} onChange={(e) => set({ amount: e.target.value })} />
-                      <input aria-label="Promised date" type="date" className={inputCls} value={p.promised_date} onChange={(e) => set({ promised_date: e.target.value })} />
+                      <DateField compact label="Promised date" value={p.promised_date} onChange={(v) => set({ promised_date: v ?? "" })} />
                       <select aria-label="Method" className={inputCls} value={p.method} onChange={(e) => set({ method: e.target.value })}>
                         <option value="upi">UPI</option>
                         <option value="cash">Cash</option>
                         <option value="other">Other</option>
                       </select>
-                      {p.method === "cash" ? <input aria-label="Pickup time the customer confirmed" className={inputCls} placeholder="Pickup time, if stated" value={p.pickup_window} onChange={(e) => set({ pickup_window: e.target.value })} /> : <button className="text-left text-xs text-rose-700 underline" onClick={() => setProposals((all) => all.filter((_, j) => j !== i))}>Remove</button>}
+                      {p.method === "cash" ? <input aria-label="Pickup time the customer confirmed" className={inputCls} placeholder="Pickup time, if stated" value={p.pickup_window} onChange={(e) => set({ pickup_window: e.target.value })} /> : <TextAction tone="danger" onClick={() => setProposals((all) => all.filter((_, j) => j !== i))}>Remove</TextAction>}
                     </div>
                   );
                 })}
@@ -201,35 +213,35 @@ export default function ConversationsPage() {
                     {openInvoices.map((i) => <option key={i.id} value={i.id}>{i.number} · {inr(i.due_paise)} due</option>)}
                   </select>
                 </Field>
-                <label className="flex items-start gap-2 text-sm">
-                  <input type="checkbox" className="mt-0.5" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
+                <label className="flex min-h-11 items-center gap-2.5 text-sm">
+                  <input type="checkbox" className="h-5 w-5 shrink-0 accent-[#0a6b4d]" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
                   The customer explicitly stated these amounts and dates.
                 </label>
-                <div className="flex gap-2">
+                <div className="grid grid-cols-[1fr_auto] gap-2">
                   <Button busy={act.busy === "save"} disabled={!valid || !confirmed} onClick={savePromises}>Save {proposals.length} promise{proposals.length === 1 ? "" : "s"}</Button>
                   <Button variant="ghost" onClick={() => (setEvidence(null), setProposals([]))}>Discard</Button>
                 </div>
                 <p className="text-xs text-muted">Saved as promises only. No receipt is created and the balance does not change.</p>
               </div>
-            </Card>
-          )}
+            </>)}
+          </Sheet>
 
-          <Card title={`Promises from ${customer?.name ?? "customer"}`} action={canWrite && !evidence ? <Button variant="ghost" onClick={() => startProposals([], "Told me in person", null, "in_person")}>Add in-person promise</Button> : undefined}>
+          <Card className="order-2" title="What they promised" action={canWrite && !evidence ? <Button variant="ghost" onClick={() => startProposals([], "Told me in person", null, "in_person")}>Add</Button> : undefined}>
             {promises.loading && !promises.data && <Loading />}
             {mine.length === 0 && promises.data && <Empty>No promises recorded for this customer.</Empty>}
             <ul className="divide-y divide-line">
               {mine.map((p) => (
                 <li key={p.id} className="py-2.5 text-sm">
                   <div className="flex items-center justify-between gap-3">
-                    <span className="flex flex-wrap items-center gap-1.5"><Badge status={p.status} /> {fmtDate(p.promised_date)} · {p.method.toUpperCase()}{p.pickup_window && ` · pickup ${p.pickup_window}`} <SimTag show={p.simulated} /></span>
+                    <span className="flex flex-wrap items-center gap-1.5"><Badge status={p.status} /> {fmtDay(p.promised_date, me.today)} · {methodLabel(p.method)}{p.pickup_window && ` · pickup ${p.pickup_window}`} <SimTag show={p.simulated} /></span>
                     <span className="tabular font-semibold">{inr(p.amount_paise)}</span>
                   </div>
                   <p className="mt-0.5 truncate text-xs text-muted">“{p.evidence_text}”</p>
                   {canWrite && p.status === "open" && (
-                    <div className="mt-1 flex gap-3 text-xs">
-                      <button className="text-brand underline" onClick={() => setStatus(p, "kept")}>Mark kept</button>
-                      <button className="text-brand underline" onClick={() => setStatus(p, "broken")}>Mark not kept</button>
-                      <button className="text-muted underline" onClick={() => setStatus(p, "cancelled")}>Cancel</button>
+                    <div className="-mb-2 -ml-2 flex flex-wrap">
+                      <TextAction disabled={!!act.busy} onClick={() => setStatus(p, "kept")}>They paid</TextAction>
+                      <TextAction disabled={!!act.busy} onClick={() => setStatus(p, "broken")}>Did not pay</TextAction>
+                      <TextAction tone="muted" disabled={!!act.busy} onClick={() => setStatus(p, "cancelled")}>Remove</TextAction>
                     </div>
                   )}
                 </li>

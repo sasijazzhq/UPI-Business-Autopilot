@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { PaymentRow, RequestRow } from "@/components/payments";
 import { useMe } from "@/components/shell";
-import { Badge, Button, Card, Empty, ErrorBox, Field, Loading, Notice, PageHeader, Table, inputCls, useAction } from "@/components/ui";
+import { Badge, Button, Card, Empty, ErrorBox, Field, Notice, PageHeader, Segmented, Sheet, SimNote, Skeleton, TextAction, inputCls, useAction } from "@/components/ui";
 import { fmtDateTime, inr, parseRupees, post, useApi } from "@/lib/api";
 import type { Payment, PaymentRequest } from "@/lib/types";
 
@@ -11,13 +11,11 @@ interface Mismatch {
   kind: string;
   detail: string;
   status: string;
-  resolution_note: string | null;
 }
 
 interface WebhookEvent {
   id: string;
   provider: string;
-  event_id: string | null;
   event_type: string | null;
   signature_valid: boolean;
   status: string;
@@ -27,11 +25,22 @@ interface WebhookEvent {
 }
 
 const EVENTS: Record<string, string> = {
-  "payment.captured": "Payment captured",
-  "payment.authorized": "Authorised only (not captured)",
+  "payment.captured": "Payment received",
+  "payment.authorized": "Authorised only, not captured",
   "payment.failed": "Payment failed",
-  "refund.processed": "Refund of an existing payment",
-  "payment.dispute.created": "Dispute on an existing payment",
+  "refund.processed": "Refund of an earlier payment",
+  "payment.dispute.created": "Dispute on an earlier payment",
+};
+
+const KIND: Record<string, string> = {
+  unknown_reference: "Money without a matching request",
+  unallocated_funds: "Extra money not applied",
+  amount_mismatch: "Amount differs from request",
+  amount_changed: "Provider changed the amount",
+  currency_mismatch: "Wrong currency",
+  partial_refund: "Partial refund",
+  reference_not_owned: "Request belongs elsewhere",
+  adjustment_for_unknown_payment: "Refund or dispute for unknown payment",
 };
 
 export default function PaymentsPage() {
@@ -42,6 +51,8 @@ export default function PaymentsPage() {
   const events = useApi<WebhookEvent[]>("/v1/webhook-events");
   const reloadAll = () => (payments.reload(), requests.reload(), mismatches.reload(), events.reload());
 
+  const [tab, setTab] = useState("money");
+  const [sim, setSim] = useState(false);
   const [eventType, setEventType] = useState("payment.captured");
   const [target, setTarget] = useState("");
   const [amount, setAmount] = useState("");
@@ -54,7 +65,10 @@ export default function PaymentsPage() {
   const approved = requests.data?.filter((r) => r.status === "approved" && r.mode === "simulated") ?? [];
   const demoPayments = payments.data?.filter((p) => p.provider === "demo") ?? [];
   const open = mismatches.data?.filter((m) => m.status === "open" && m.kind !== "dispute_open") ?? [];
-  const pendingRequests = requests.data?.filter((r) => ["proposed", "approved"].includes(r.status)) ?? [];
+  const pending = requests.data?.filter((r) => ["proposed", "approved"].includes(r.status)) ?? [];
+  const claims = payments.data?.filter((p) => ["manual_unverified", "disputed"].includes(p.state)) ?? [];
+  const settled = payments.data?.filter((p) => !["manual_unverified", "disputed"].includes(p.state)) ?? [];
+  const error = payments.error ?? requests.error ?? mismatches.error ?? events.error;
 
   const simulate = () =>
     act.run("sim", async () => {
@@ -66,93 +80,113 @@ export default function PaymentsPage() {
       setResult(await post("/v1/demo/simulate-payment-event", body));
       reloadAll();
     });
-  const error = payments.error ?? requests.error ?? mismatches.error ?? events.error;
 
   return (
     <>
-      <PageHeader title="Payment verification" subtitle="Only a signed provider event or an owner's confirmation changes a balance." />
-      <div className="space-y-4">
-        {error && <ErrorBox message={error} onRetry={reloadAll} />}
+      <PageHeader title="Payments" subtitle="Only verified money changes a balance." />
+      <Segmented
+        value={tab}
+        onChange={setTab}
+        options={[
+          { value: "money", label: "Received" },
+          { value: "requests", label: "Requests", count: pending.length },
+          { value: "check", label: "To check", count: open.length + claims.length },
+          { value: "log", label: "Log" },
+        ]}
+      />
+      {error && <div className="mb-3"><ErrorBox message={error} onRetry={reloadAll} /></div>}
+      {!payments.data && payments.loading && <Skeleton rows={3} />}
 
-        <Card title="Unresolved mismatches">
-          {mismatches.loading && !mismatches.data && <Loading />}
-          {mismatches.data && open.length === 0 && <Empty>Nothing to resolve.</Empty>}
-          <ul className="divide-y divide-line">
-            {open.map((m) => <MismatchRow key={m.id} m={m} onChange={reloadAll} owner={me.role === "owner"} />)}
-          </ul>
+      {tab === "money" && payments.data && (
+        <Card title="Verified and confirmed">
+          {settled.length === 0 ? <Empty>No verified payments yet. They appear here the moment the payment provider confirms them.</Empty> : <ul className="-my-1 divide-y divide-line">{settled.map((p) => <PaymentRow key={p.id} p={p} onChange={reloadAll} showCustomer />)}</ul>}
+          <SimNote />
         </Card>
+      )}
 
-        <div className="grid gap-4 lg:grid-cols-2">
-          <Card title="Receipts">
-            {payments.loading && !payments.data && <Loading />}
-            {payments.data?.length === 0 && <Empty>No receipts yet.</Empty>}
-            <ul className="divide-y divide-line">{payments.data?.map((p) => <PaymentRow key={p.id} p={p} onChange={reloadAll} showCustomer />)}</ul>
+      {tab === "requests" && (
+        <Card title="UPI requests in progress">
+          {pending.length === 0 ? <Empty>No open requests. Open an invoice and tap “Prepare request”.</Empty> : <ul className="-my-1 divide-y divide-line">{pending.map((r) => <RequestRow key={r.id} r={r} onChange={reloadAll} showInvoice />)}</ul>}
+        </Card>
+      )}
+
+      {tab === "check" && (
+        <div className="space-y-3">
+          <Card title="Claims and disputes">
+            {claims.length === 0 ? <Empty>No unverified claims or disputes.</Empty> : <ul className="-my-1 divide-y divide-line">{claims.map((p) => <PaymentRow key={p.id} p={p} onChange={reloadAll} showCustomer />)}</ul>}
           </Card>
-          <div className="space-y-4">
-            <Card title="Payment requests in progress">
-              {requests.data && pendingRequests.length === 0 && <Empty>No open requests. Prepare one from an invoice.</Empty>}
-              <ul className="divide-y divide-line">{pendingRequests.map((r) => <RequestRow key={r.id} r={r} onChange={reloadAll} showInvoice />)}</ul>
-            </Card>
-
-            {me.demo_mode && me.role !== "viewer" && (
-              <Card title="Demo provider simulator" action={<Badge label="Simulated money" tone="violet" />}>
-                <div className="space-y-3">
-                  <Field label="Event the provider sends">
-                    <select className={inputCls} value={eventType} onChange={(e) => (setEventType(e.target.value), setTarget(""))}>
-                      {Object.entries(EVENTS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                    </select>
-                  </Field>
-                  <Field label={needsPayment ? "Existing demo payment" : "For payment request"} hint={needsPayment ? undefined : "Choose none to simulate money arriving with no matching request."}>
-                    <select className={inputCls} value={target} onChange={(e) => setTarget(e.target.value)}>
-                      <option value="">{needsPayment ? "Choose a payment" : "None (unmatched payment)"}</option>
-                      {needsPayment
-                        ? demoPayments.map((p) => <option key={p.id} value={p.id}>{p.customer_name ?? "Unmatched"} · {inr(p.amount_paise)} · {p.state.replaceAll("_", " ")}</option>)
-                        : approved.map((r) => <option key={r.id} value={r.id}>{r.customer_name} · {r.invoice_number} · {inr(r.amount_paise)}</option>)}
-                    </select>
-                  </Field>
-                  {!needsPayment && (
-                    <Field label="Amount paid (₹)" hint={target ? "Leave empty to pay the requested amount. Enter a different amount to test a mismatch." : "Required when there is no request."}>
-                      <input className={`${inputCls} tabular`} inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
-                    </Field>
-                  )}
-                  <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={twice} onChange={(e) => setTwice(e.target.checked)} /> Deliver the same webhook twice</label>
-                  <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={tamper} onChange={(e) => setTamper(e.target.checked)} /> Send with a forged signature</label>
-                  {act.error && <ErrorBox message={act.error} />}
-                  <Button busy={act.busy === "sim"} disabled={needsPayment ? !target : !target && !parseRupees(amount)} onClick={simulate}>Send signed webhook</Button>
-                  {result && (
-                    <ul className="space-y-1 text-sm" aria-live="polite">
-                      {result.deliveries.map((d, i) => (
-                        <li key={i} className="flex flex-wrap items-center gap-1.5">
-                          <span className="text-muted">Delivery {i + 1}:</span> <Badge status={d.status} /> <span className="text-xs text-muted">HTTP {d.http_status} · {d.detail}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              </Card>
-            )}
-          </div>
+          <Card title="Mismatches">
+            {open.length === 0 ? <Empty>Nothing to sort out.</Empty> : <ul className="-my-1 divide-y divide-line">{open.map((m) => <MismatchRow key={m.id} m={m} onChange={reloadAll} owner={me.role === "owner"} />)}</ul>}
+          </Card>
+          <Notice tone="blue">A bank SMS, a screenshot or a customer saying “paid” is kept as a claim. It is not counted until an owner checks and confirms it.</Notice>
         </div>
+      )}
 
-        <Card title="Provider webhook log">
-          {events.data?.length === 0 && <Empty>No provider events received.</Empty>}
-          {!!events.data?.length && (
-            <Table head={["Received", "Event", "Signature", "Outcome", "Detail"]}>
-              {events.data.map((e) => (
-                <tr key={e.id}>
-                  <td className="whitespace-nowrap py-2 pr-3 text-muted">{fmtDateTime(e.received_at)}</td>
-                  <td className="py-2 pr-3">{e.event_type ?? "—"}<span className="block text-xs text-muted">{e.provider}</span></td>
-                  <td className="py-2 pr-3">{e.signature_valid ? <Badge label="Valid" tone="green" /> : <Badge label="Invalid" tone="red" />}</td>
-                  <td className="py-2 pr-3"><Badge status={e.status} />{e.duplicate_deliveries > 0 && <span className="ml-1 text-xs text-muted">+{e.duplicate_deliveries} repeat{e.duplicate_deliveries === 1 ? "" : "s"} ignored</span>}</td>
-                  <td className="py-2 pr-3 text-xs text-muted">{e.detail}</td>
-                </tr>
-              ))}
-            </Table>
-          )}
-          <p className="mt-2 text-xs text-muted">Events with an invalid signature are rejected before they are linked to any merchant, so they do not appear here.</p>
+      {tab === "log" && (
+        <Card title="Messages from the payment provider">
+          {events.data?.length === 0 && <Empty>Nothing received from the provider yet.</Empty>}
+          <ul className="-my-1 divide-y divide-line">
+            {events.data?.map((e) => (
+              <li key={e.id} className="py-2.5 text-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold">{EVENTS[e.event_type ?? ""] ?? e.event_type ?? "Unknown event"}</span>
+                  <Badge status={e.status} />
+                </div>
+                <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-muted">
+                  {fmtDateTime(e.received_at)} · {e.provider} {e.signature_valid ? <Badge label="Signature valid" tone="green" /> : <Badge label="Signature invalid" tone="red" />}
+                  {e.duplicate_deliveries > 0 && <Badge label={`${e.duplicate_deliveries} repeat ignored`} tone="gray" />}
+                </p>
+                {e.detail && <p className="mt-0.5 text-xs text-muted">{e.detail}</p>}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-xs text-muted">A message with a forged signature is thrown away before it is linked to any merchant, so it never shows here.</p>
         </Card>
-        <Notice tone="blue">A bank SMS, a screenshot or a customer saying “paid” is recorded as an unverified claim. It never counts as received until an owner confirms it after their own check.</Notice>
-      </div>
+      )}
+
+      {me.demo_mode && me.role !== "viewer" && (
+        <Button variant="secondary" className="mt-3 w-full border-violet-300 text-violet-800" onClick={() => (setSim(true), setResult(null))}>
+          Test it: act as the payment provider
+        </Button>
+      )}
+
+      <Sheet open={sim} title="Demo payment provider" onClose={() => setSim(false)}>
+        <div className="space-y-3">
+          <Notice>Simulated money only. This sends a signed message through the same path a real provider uses.</Notice>
+          <Field label="What happened">
+            <select className={inputCls} value={eventType} onChange={(e) => (setEventType(e.target.value), setTarget(""))}>
+              {Object.entries(EVENTS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+          </Field>
+          <Field label={needsPayment ? "Which payment" : "For which request"}>
+            <select className={inputCls} value={target} onChange={(e) => setTarget(e.target.value)}>
+              <option value="">{needsPayment ? "Choose a payment" : "No request (unmatched money)"}</option>
+              {needsPayment
+                ? demoPayments.map((p) => <option key={p.id} value={p.id}>{p.customer_name ?? "Unmatched"} · {inr(p.amount_paise)} · {p.state.replaceAll("_", " ")}</option>)
+                : approved.map((r) => <option key={r.id} value={r.id}>{r.customer_name} · {r.invoice_number} · {inr(r.amount_paise)}</option>)}
+            </select>
+          </Field>
+          {!needsPayment && (
+            <Field label="Amount paid (₹)" hint={target ? "Leave empty to pay the requested amount." : "Needed when there is no request."}>
+              <input className={`${inputCls} tabular`} inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
+            </Field>
+          )}
+          <label className="flex min-h-11 items-center gap-2.5 text-sm"><input type="checkbox" className="h-5 w-5 accent-[#0a6b4d]" checked={twice} onChange={(e) => setTwice(e.target.checked)} /> Deliver the same message twice</label>
+          <label className="flex min-h-11 items-center gap-2.5 text-sm"><input type="checkbox" className="h-5 w-5 accent-[#0a6b4d]" checked={tamper} onChange={(e) => setTamper(e.target.checked)} /> Send with a forged signature</label>
+          {act.error && <ErrorBox message={act.error} />}
+          <Button className="w-full" busy={act.busy === "sim"} disabled={needsPayment ? !target : !target && !parseRupees(amount)} onClick={simulate}>Send signed message</Button>
+          {result && (
+            <ul className="space-y-1.5 text-sm" aria-live="polite">
+              {result.deliveries.map((d, i) => (
+                <li key={i}>
+                  <span className="flex items-center gap-1.5"><span className="font-semibold">Delivery {i + 1}</span> <Badge status={d.status} /></span>
+                  <span className="text-xs text-muted">{d.detail}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </Sheet>
     </>
   );
 }
@@ -163,12 +197,13 @@ function MismatchRow({ m, onChange, owner }: { m: Mismatch; onChange: () => void
   const act = useAction();
   return (
     <li className="py-2.5 text-sm">
-      <p><Badge label={m.kind.replaceAll("_", " ")} tone="amber" /> <span className="ml-1">{m.detail}</span></p>
-      {owner && !open && <button className="mt-1 text-xs font-medium text-brand underline" onClick={() => setOpen(true)}>Mark resolved</button>}
+      <p className="font-semibold">{KIND[m.kind] ?? m.kind.replaceAll("_", " ")}</p>
+      <p className="mt-0.5 break-words text-xs text-muted">{m.detail}</p>
+      {owner && !open && <TextAction className="-ml-2" onClick={() => setOpen(true)}>Mark as sorted</TextAction>}
       {open && (
-        <div className="mt-2 flex flex-wrap gap-2">
-          <input aria-label="Resolution note" className={`${inputCls} max-w-md`} value={note} onChange={(e) => setNote(e.target.value)} placeholder="What did you do about it?" />
-          <Button variant="secondary" busy={!!act.busy} disabled={note.trim().length < 3} onClick={() => act.run("r", async () => (await post(`/v1/mismatches/${m.id}/resolve`, { note }), onChange()))}>Resolve</Button>
+        <div className="mt-2 space-y-2">
+          <input aria-label="Resolution note" className={inputCls} value={note} onChange={(e) => setNote(e.target.value)} placeholder="What did you do about it?" />
+          <Button variant="secondary" busy={!!act.busy} disabled={note.trim().length < 3} onClick={() => act.run("r", async () => (await post(`/v1/mismatches/${m.id}/resolve`, { note }), onChange()))}>Save</Button>
           {act.error && <ErrorBox message={act.error} />}
         </div>
       )}

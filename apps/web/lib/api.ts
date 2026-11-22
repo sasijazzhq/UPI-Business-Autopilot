@@ -11,15 +11,36 @@ export function getToken(): string | null {
   }
 }
 
-export function setToken(token: string | null) {
+export function setToken(token: string | null, silent = false) {
   try {
     if (token) window.localStorage.setItem(TOKEN_KEY, token);
     else window.localStorage.removeItem(TOKEN_KEY);
   } catch {
     /* storage unavailable: session lasts until reload */
   }
-  window.dispatchEvent(new Event("auth-changed"));
+  if (!silent) window.dispatchEvent(new Event("auth-changed"));
 }
+
+// ---- request lifecycle -------------------------------------------------------------------------
+// Every request belongs to an "epoch". cancelAllRequests() aborts whatever is in flight and starts a
+// new epoch; a response that comes back for an older epoch is dropped before it can touch auth or
+// screen state. pauseRequests() additionally holds back new requests (used while sample data resets).
+let epoch = 0;
+let paused = false;
+const inflight = new Set<AbortController>();
+
+export function cancelAllRequests() {
+  epoch += 1;
+  inflight.forEach((c) => c.abort());
+  inflight.clear();
+}
+
+export function pauseRequests(on: boolean) {
+  paused = on;
+}
+
+/** status -1 = cancelled or superseded; callers ignore it. */
+export const CANCELLED = -1;
 
 export class ApiError extends Error {
   constructor(public status: number, message: string, public issues: Issue[] = []) {
@@ -46,7 +67,11 @@ function describe(detail: unknown, status: number): { message: string; issues: I
   return { message: status >= 500 ? "The server could not be reached or failed. Is the API running?" : `Request failed (${status})`, issues: [] };
 }
 
-export async function api<T = any>(path: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {
+export async function api<T = any>(path: string, init: RequestInit & { json?: unknown; duringReset?: boolean } = {}): Promise<T> {
+  if (paused && !init.duringReset) throw new ApiError(CANCELLED, "Request held while sample data resets");
+  const mine = epoch;
+  const controller = new AbortController();
+  inflight.add(controller);
   const headers = new Headers(init.headers);
   const token = getToken();
   if (token) headers.set("Authorization", `Bearer ${token}`);
@@ -57,11 +82,16 @@ export async function api<T = any>(path: string, init: RequestInit & { json?: un
   }
   let res: Response;
   try {
-    res = await fetch(`/api${path}`, { ...init, headers, body });
+    res = await fetch(`/api${path}`, { ...init, headers, body, signal: controller.signal });
   } catch {
+    if (controller.signal.aborted) throw new ApiError(CANCELLED, "Request cancelled");
     throw new ApiError(0, "Cannot reach the server. Check that the API is running.");
+  } finally {
+    inflight.delete(controller);
   }
-  if (res.status === 401 && token) setToken(null);
+  if (mine !== epoch) throw new ApiError(CANCELLED, "Response superseded");
+  // Sign out only if the rejected token is still the one in use.
+  if (res.status === 401 && token && token === getToken()) setToken(null);
   if (!res.ok) {
     const data = await res.json().catch(() => null);
     const { message, issues } = describe(data?.detail, res.status);
@@ -84,7 +114,7 @@ export function useApi<T = any>(path: string | null) {
     setLoading(true);
     api<T>(path)
       .then((d) => live && (setData(d), setError(null)))
-      .catch((e: Error) => live && setError(e.message))
+      .catch((e: ApiError) => live && e.status !== CANCELLED && setError(e.message))
       .finally(() => live && setLoading(false));
     return () => {
       live = false;
@@ -121,13 +151,41 @@ export function rupeesText(paise: number | null | undefined): string {
   return `${Math.floor(paise / 100)}${rem ? `.${String(rem).padStart(2, "0")}` : ""}`;
 }
 
-export function fmtDate(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const d = new Date(iso.length === 10 ? `${iso}T00:00:00+05:30` : iso);
-  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Kolkata", weekday: iso.length === 10 ? "short" : undefined });
+const IST = "Asia/Kolkata";
+
+function parts(d: Date, opts: Intl.DateTimeFormatOptions): Record<string, string> {
+  return Object.fromEntries(new Intl.DateTimeFormat("en-IN", { timeZone: IST, ...opts }).formatToParts(d).map((p) => [p.type, p.value]));
 }
 
+function asDate(iso: string): Date {
+  return new Date(iso.length === 10 ? `${iso}T00:00:00+05:30` : iso);
+}
+
+/** "2026-11-22" -> "Sun, 22 Nov 2026" (India order, month as a word so it cannot be misread). */
+export function fmtDate(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const p = parts(asDate(iso), { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+  return `${p.weekday}, ${p.day} ${p.month} ${p.year}`;
+}
+
+/** Relative day for promises: "Today", "Tomorrow", "Yesterday", else "Mon, 23 Nov". */
+export function fmtDay(iso: string | null | undefined, today: string): string {
+  if (!iso) return "—";
+  const diff = Math.round((asDate(iso.slice(0, 10)).getTime() - asDate(today).getTime()) / 86400000);
+  if (diff === 0) return "Today";
+  if (diff === 1) return "Tomorrow";
+  if (diff === -1) return "Yesterday";
+  const p = parts(asDate(iso), { weekday: "short", day: "numeric", month: "short" });
+  return `${p.weekday}, ${p.day} ${p.month}`;
+}
+
+/** "22 Nov, 3:00 pm" */
 export function fmtDateTime(iso: string | null | undefined): string {
   if (!iso) return "—";
-  return new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: "Asia/Kolkata" });
+  const p = parts(new Date(iso), { day: "numeric", month: "short", hour: "numeric", minute: "2-digit", hour12: true });
+  return `${p.day} ${p.month}, ${p.hour}:${p.minute} ${(p.dayPeriod ?? "").toLowerCase()}`;
+}
+
+export function methodLabel(method: string | null | undefined): string {
+  return { upi: "UPI", cash: "Cash", other: "Other", upi_claim: "UPI (claimed)", bank_transfer_claim: "Bank transfer (claimed)" }[method ?? ""] ?? (method ?? "UPI").toUpperCase();
 }

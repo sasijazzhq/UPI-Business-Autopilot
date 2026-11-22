@@ -16,6 +16,7 @@ DEFINITIONS = {
     "expected_today": "Sum of open customer-stated promises dated this day. An intention, not money.",
     "contacted": "Customers with a recorded outbound message this day. Simulated activity is counted separately and labelled.",
     "replied": "Customers with a recorded inbound message this day.",
+    "movement": "For the chosen day: owed at start + new invoices issued that day - verified money applied to invoices that day (reversals add back) = owed at end of day.",
     "cash_pickups": "Open cash promises where the customer confirmed a pickup window. Unconfirmed availability is not listed.",
 }
 
@@ -90,9 +91,26 @@ def today_report(db: Session, merchant_id: str, day: date) -> dict:
         if total - int(db.scalar(select(func.coalesce(func.sum(PaymentAllocation.amount_paise), 0))
                                  .where(PaymentAllocation.invoice_id == inv_id))) > 0)
 
+    # Day movement: how outstanding changed on this IST day. Derived from the same ledger rows:
+    # outstanding_at_end = outstanding_at_start + new invoices - net allocations (reversals add back).
+    new_invoices = db.execute(select(func.count(), func.coalesce(func.sum(Invoice.total_paise), 0)).where(
+        Invoice.merchant_id == merchant_id, Invoice.created_at >= start, Invoice.created_at < end)).one()
+    applied = int(db.scalar(select(func.coalesce(func.sum(PaymentAllocation.amount_paise), 0)).where(
+        PaymentAllocation.merchant_id == merchant_id, PaymentAllocation.created_at >= start,
+        PaymentAllocation.created_at < end)))
+    later_invoices = int(db.scalar(select(func.coalesce(func.sum(Invoice.total_paise), 0)).where(
+        Invoice.merchant_id == merchant_id, Invoice.created_at >= end)))
+    later_applied = int(db.scalar(select(func.coalesce(func.sum(PaymentAllocation.amount_paise), 0)).where(
+        PaymentAllocation.merchant_id == merchant_id, PaymentAllocation.created_at >= end)))
+    outstanding_now = total_outstanding(db, merchant_id)
+    closing = outstanding_now - later_invoices + later_applied
+    movement = {"opening_outstanding_paise": closing - int(new_invoices[1]) + applied,
+                "new_invoice_count": int(new_invoices[0]), "new_invoices_paise": int(new_invoices[1]),
+                "verified_applied_paise": applied, "closing_outstanding_paise": closing}
+
     return {
         "date": day.isoformat(), "timezone": "Asia/Kolkata",
-        "outstanding_paise": total_outstanding(db, merchant_id), "open_invoice_count": open_invoices,
+        "outstanding_paise": outstanding_now, "open_invoice_count": open_invoices, "movement": movement,
         "received": {
             "provider_verified_paise": verified, "provider_verified_by_mode": by_mode,
             "merchant_confirmed_paise": confirmed,

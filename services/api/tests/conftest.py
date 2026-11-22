@@ -7,7 +7,7 @@ os.environ.update({
     "DATABASE_URL": os.environ.get("TEST_DATABASE_URL", f"sqlite:///{_tmp}/test.db"), "UPLOAD_DIR": f"{_tmp}/uploads", "DEMO_MODE": "true",
     "DEMO_WEBHOOK_SECRET": "test-secret", "GEMINI_API_KEY": "", "RAZORPAY_KEY_ID": "", "ELEVENLABS_API_KEY": "",
     "WHATSAPP_APP_SECRET": "wa-secret", "WHATSAPP_VERIFY_TOKEN": "wa-verify", "WHATSAPP_ACCESS_TOKEN": "",
-    "OUTBOUND_POLICY_APPROVED": "false", "VOICE_TOOL_SECRET": "voice-secret", "VOICE_TOOL_MERCHANT_ID": "mer_demo_a",
+    "OUTBOUND_POLICY_APPROVED": "false", "DEMO_ACCESS_CODE": "", "VOICE_TOOL_SECRET": "voice-secret", "VOICE_TOOL_MERCHANT_ID": "mer_demo_a",
 })
 
 import pytest  # noqa: E402
